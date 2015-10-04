@@ -197,8 +197,11 @@ static int Badd(lua_State *L)
     mpi *a=Bget(L,1);
     mpi *b=Bget(L,2);
     mpi *c=Bnew(L);
-    mpi_add_mpi(c,a,b);
-    return 1;
+    switch(mpi_add_mpi(c,a,b)) {
+    case 0: return 1;
+    case 1: return luaL_error(L, "memory allocation failed");
+    default: return luaL_error(L, "internal error");
+    }
 }
 
 static int Bsub(lua_State *L)
@@ -206,8 +209,11 @@ static int Bsub(lua_State *L)
     mpi *a=Bget(L,1);
     mpi *b=Bget(L,2);
     mpi *c=Bnew(L);
-    mpi_sub_mpi(c,a,b);
-    return 1;
+    switch(mpi_sub_mpi(c,a,b)) {
+    case 0: return 1;
+    case 1: return luaL_error(L, "memory allocation failed");
+    default: return luaL_error(L, "internal error");
+    }
 }
 
 static int Bmul(lua_State *L)
@@ -215,8 +221,11 @@ static int Bmul(lua_State *L)
     mpi *a=Bget(L,1);
     mpi *b=Bget(L,2);
     mpi *c=Bnew(L);
-    mpi_mul_mpi(c,a,b);
-    return 1;
+    switch(mpi_mul_mpi(c,a,b)) {
+    case 0: return 1;
+    case 1: return luaL_error(L, "memory allocation failed");
+    default: return luaL_error(L, "internal error");
+    }
 }
 
 static int Bdiv(lua_State *L)
@@ -225,8 +234,12 @@ static int Bdiv(lua_State *L)
     mpi *b=Bget(L,2);
     mpi *q=Bnew(L);
     mpi *r=NULL;
-    mpi_div_mpi(q,r,a,b);
-    return 1;
+    switch(mpi_div_mpi(q,r,a,b)) {
+    case 0: return 1;
+    case 1: return luaL_error(L, "memory allocation failed");
+    case POLARSSL_ERR_MPI_DIVISION_BY_ZERO: return luaL_error(L, "attempt to divide by zero");
+    default: return luaL_error(L, "internal error");
+    }
 }
 
 static int Bmod(lua_State *L)
@@ -235,8 +248,12 @@ static int Bmod(lua_State *L)
     mpi *b=Bget(L,2);
     mpi *r=Bnew(L);
     mpi *q=NULL;
-    mpi_div_mpi(q,r,a,b);
-    return 1;
+    switch(mpi_div_mpi(q,r,a,b)) {
+    case 0: return 1;
+    case 1: return luaL_error(L, "memory allocation failed");
+    case POLARSSL_ERR_MPI_DIVISION_BY_ZERO: return luaL_error(L, "attempt to divide by zero");
+    default: return luaL_error(L, "internal error");
+    }
 }
 
 /* Remove references to rmod, because there is no comparable PolarSSL function */
@@ -247,8 +264,12 @@ static int Bdivmod(lua_State *L)
     mpi *b=Bget(L,2);
     mpi *q=Bnew(L);
     mpi *r=Bnew(L);
-    mpi_div_mpi(q,r,a,b);
-    return 2;
+    switch(mpi_div_mpi(q,r,a,b)) {
+    case 0: return 2;
+    case 1: return luaL_error(L, "memory allocation failed");
+    case POLARSSL_ERR_MPI_DIVISION_BY_ZERO: return luaL_error(L, "attempt to divide by zero");
+    default: return luaL_error(L, "internal error");
+    }
 }
 
 static int Bgcd(lua_State *L)
@@ -256,8 +277,11 @@ static int Bgcd(lua_State *L)
     mpi *a=Bget(L,1);
     mpi *b=Bget(L,2);
     mpi *c=Bnew(L);
-    mpi_gcd(c,a,b);
-    return 1;
+    switch(mpi_gcd(c,a,b)) {
+    case 0: return 1;
+    case 1: return luaL_error(L, "memory allocation failed");
+    default: return luaL_error(L, "internal error");
+    }
 }
 
 /* Remove references to pow.  PolarSSL only has powmod */
@@ -269,13 +293,13 @@ static int Bpowmod(lua_State *L)
     mpi *a=Bget(L,1);
     mpi *b=Bget(L,2);
     mpi *m=Bget(L,3);
-    mpi RR;
-    mpi *rr=&RR;
-    mpi_init(rr);
     mpi *c=Bnew(L);
-    mpi_exp_mod(c,a,b,m,rr);
-    mpi_free(rr);
-    return 1;
+    switch(mpi_exp_mod(c,a,b,m,NULL)) {
+    case 0: return 1;
+    case 1: return luaL_error(L, "allocation failed");
+    case POLARSSL_ERR_MPI_BAD_INPUT_DATA: return luaL_error(L, "bad modulus");
+    default: return luaL_error(L, "internal error");
+    }
 }
 
 /* Sqrmod and sqrtmod don't exist */
@@ -285,8 +309,13 @@ static int Binvmod(lua_State *L)
     mpi *a=Bget(L,1);
     mpi *m=Bget(L,2);
     mpi *c=Bnew(L);
-    mpi_inv_mod(c,a,m);
-    return 1;
+    switch(mpi_inv_mod(c,a,m)) {
+    case 0: return 1;
+    case 1: return luaL_error(L, "memory allocation failed");
+    case POLARSSL_ERR_MPI_BAD_INPUT_DATA: return luaL_error(L, "bad modulus");
+    case POLARSSL_ERR_MPI_NOT_ACCEPTABLE: return luaL_error(L, "no inverse");
+    default: return luaL_error(L, "internal error");
+    }
 }
 
 /* TODO: Add the random methods later.  First test the basic bignum stuff */
