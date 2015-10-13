@@ -4,11 +4,6 @@
 #include "lualib.h"
 #include "bignum.h"
 
-/*using namespace std;*/
-
-#define lua_boxpointer(L,u) \
-(*(void **)(lua_newuserdata(L, sizeof(void *))) = (u))
-
 #define MYNAME		"polarbn"
 #define MYVERSION	MYNAME " library for " LUA_VERSION " / August 2014 / "\
 "based on PolarSSL 1.3.7"
@@ -18,75 +13,109 @@
 #define BN_is_negative(a) ((a)->s != 1)
 #endif
 
+static const char * error_msg(int e)
+{
+    switch(e) {
+        case 1: return "memory allocation failed";
+        case POLARSSL_ERR_MPI_BAD_INPUT_DATA: return "bad input data";
+        case POLARSSL_ERR_MPI_BUFFER_TOO_SMALL: return "buffer too small";
+        case POLARSSL_ERR_MPI_DIVISION_BY_ZERO: return "division by zero";
+        case POLARSSL_ERR_MPI_FILE_IO_ERROR: return "file io error";
+        case POLARSSL_ERR_MPI_INVALID_CHARACTER: return "invalid character";
+        case POLARSSL_ERR_MPI_NEGATIVE_VALUE: return "negative value";
+        case POLARSSL_ERR_MPI_NOT_ACCEPTABLE: return "not acceptable";
+        default: return "internal error";
+    }
+}
+
+static void mpi_check(lua_State *L, int e) {
+    if (e != 0) {
+        luaL_error(L, error_msg(e));
+    }
+}
+
+
 static mpi *Bnew(lua_State *L)
 {
-    mpi **X = (mpi **) lua_newuserdata(L, sizeof(mpi));
-    mpi *x = malloc(sizeof(mpi));
-    *X = x;
+    mpi *x = (mpi*)lua_newuserdata(L, sizeof(mpi));
     mpi_init(x);
     luaL_setmetatable(L, MYTYPE);
     return x;
 }
 
-static mpi *Bget(lua_State *L, int i)
+static const mpi *Bget(lua_State *L, int i)
 {
     switch (lua_type(L,i))
     {
         case LUA_TNUMBER:
-        case LUA_TSTRING:
         {
+            const lua_Integer n = luaL_checkinteger(L, i);
             mpi *x=Bnew(L);
-            const char *s=lua_tostring(L,i);
-            if(s[0]=='X' || s[0]=='x') mpi_read_string(x, 16, s+1); else mpi_read_string(x,10,s);
+            mpi_check(L, mpi_lset(x, n));
             lua_replace(L,i);
             return x;
         }
+
+        case LUA_TSTRING:
+        {
+            mpi *x=Bnew(L);
+            const char *s = lua_tostring(L,i);
+            int radix = 10;
+            if(s[0]=='X' || s[0]=='x') {
+                radix = 16;
+                s++;
+            }
+            mpi_check(L, mpi_read_string(x, 16, s+1));
+            lua_replace(L,i);
+            return x;
+        }
+
         default:
-            return *((mpi**)luaL_checkudata(L,i,MYTYPE));
+            return luaL_checkudata(L,i,MYTYPE);
     }
-    return NULL;
 }
 
 static int Bbits(lua_State *L)
 {
-    mpi *a=Bget(L,1);
+    const mpi *a=Bget(L,1);
     lua_pushinteger(L, mpi_msb(a));
     return 1;
 }
 
+static int aux_tostring(lua_State *L, int radix)
+{
+    const mpi *a=Bget(L,1);
+    size_t buffersize = 0;
+
+    /* determine buffer size needed */
+    mpi_write_string(a, radix, NULL, &buffersize);
+
+    /* allocate and fill buffer */
+    char *s = alloca(buffersize);
+    mpi_check(L, mpi_write_string(a, radix, s, &buffersize));
+
+    lua_pushlstring(L,s,buffersize-1);
+    return 1;
+}
+
+
 static int Btostring(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    int n = mpi_msb(a);
-    size_t numChars = 3 + n/2;
-    char *s = (char *) malloc(numChars); /*for radix 10, we are safe with one char for every 3 bits with one extra for the terminating 0*/
-    mpi_write_string(a, 10, s, &numChars);
-    lua_pushstring(L,s);
-    free(s);
-    return 1;
+    return aux_tostring(L,10);
 }
 
 static int Btohex(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    int n = mpi_msb(a);
-    size_t numChars = 3 + n/4;
-    char *s = (char *) malloc(numChars); /*for radix 16, we are safe with one char for every 4 bits with one extra for the terminating 0*/
-    mpi_write_string(a, 16, s, &numChars);
-    lua_pushstring(L,s);
-    free(s);
-    return 1;
+    return aux_tostring(L,16);
 }
 
 static int Btotext(lua_State *L)
 {
-    mpi *a = Bget(L,1);
-    int n = mpi_size(a);
-    unsigned char *s = (unsigned char *) malloc(n);
-    if (s == NULL) return 0;
-    mpi_write_binary(a, s, n);
+    const mpi *a = Bget(L,1);
+    const int n = mpi_size(a);
+    unsigned char *s = alloca(n);
+    mpi_check(L, mpi_write_binary(a, s, n));
     lua_pushlstring(L, (const char *) s, n);
-    free(s);
     return 1;
 }
 
@@ -99,29 +128,29 @@ static int Btonumber(lua_State *L)
 
 static int Biszero(lua_State *L)
 {
-    mpi *a=Bget(L,1);
+    const mpi *a=Bget(L,1);
     lua_pushboolean(L, mpi_cmp_int(a,0)==0);
     return 1;
 }
 
 static int Bisone(lua_State *L)
 {
-    mpi *a=Bget(L,1);
+    const mpi *a=Bget(L,1);
     lua_pushboolean(L, mpi_cmp_int(a,1)==0);
     return 1;
 }
 
 static int Bisodd(lua_State *L)
 {
-    mpi *a=Bget(L,1);
+    const mpi *a=Bget(L,1);
     lua_pushboolean(L, mpi_get_bit(a,0));
     return 1;
 }
 
 static int Bisneg(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    lua_pushboolean(L, mpi_cmp_int(a,0)<0);
+    const mpi *a=Bget(L,1);
+    lua_pushboolean(L, a->s == -1);
     return 1;
 }
 
@@ -137,151 +166,120 @@ static int Btext(lua_State *L)
     size_t l;
     const char *s=luaL_checklstring(L,1,&l);
     mpi *a=Bnew(L);
-    mpi_read_binary(a, (unsigned char *) s, l);
+    mpi_check(L, mpi_read_binary(a, (unsigned char *) s, l));
     return 1;
 }
 
 static int Bcompare(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *b=Bget(L,2);
+    const mpi *a=Bget(L,1);
+    const mpi *b=Bget(L,2);
     lua_pushinteger(L,mpi_cmp_mpi(a,b));
     return 1;
 }
 
 static int Beq(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *b=Bget(L,2);
+    const mpi *a=Bget(L,1);
+    const mpi *b=Bget(L,2);
     lua_pushboolean(L,mpi_cmp_mpi(a,b)==0);
     return 1;
 }
 
 static int Blt(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *b=Bget(L,2);
+    const mpi *a=Bget(L,1);
+    const mpi *b=Bget(L,2);
     lua_pushboolean(L, mpi_cmp_mpi(a,b)<0);
     return 1;
 }
 
 static int Bneg(lua_State *L)
 {
-    mpi A;
-    mpi *a = &A;
-    mpi *b=Bget(L,1);
-    mpi *c=Bnew(L);
-    mpi_init(a);
-    mpi_sub_mpi(c, a, b);
-    mpi_free(a);
+    const mpi *b=Bget(L,1);
+    mpi *a=Bnew(L);
+    mpi_check(L, mpi_copy(a,b));
+    a->s = -b->s;
     return 1;
 }
 
 static int Babs(lua_State *L)
 {
-    mpi *b=Bget(L,1);
-    if (mpi_cmp_int(b,0)<0) {
-        mpi A;
-        mpi *a=&A;
-        mpi *c=Bnew(L);
-        mpi_init(a);
-        mpi_sub_mpi(c,a,b);
-        mpi_free(a);
+    const mpi *b=Bget(L,1);
+    if (b->s != 1) {
+        mpi *a=Bnew(L);
+        mpi_check(L, mpi_copy(a,b));
+        a->s = 1;
+    } else {
+        lua_settop(L,1);
     }
-    else lua_settop(L,1);
     return 1;
 }
 
 static int Badd(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *b=Bget(L,2);
+    const mpi *a=Bget(L,1);
+    const mpi *b=Bget(L,2);
     mpi *c=Bnew(L);
-    switch(mpi_add_mpi(c,a,b)) {
-    case 0: return 1;
-    case 1: return luaL_error(L, "memory allocation failed");
-    default: return luaL_error(L, "internal error");
-    }
+    mpi_check(L, mpi_add_mpi(c,a,b));
+    return 1;
 }
 
 static int Bsub(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *b=Bget(L,2);
+    const mpi *a=Bget(L,1);
+    const mpi *b=Bget(L,2);
     mpi *c=Bnew(L);
-    switch(mpi_sub_mpi(c,a,b)) {
-    case 0: return 1;
-    case 1: return luaL_error(L, "memory allocation failed");
-    default: return luaL_error(L, "internal error");
-    }
+    mpi_check(L, mpi_sub_mpi(c,a,b));
+    return 1;
 }
 
 static int Bmul(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *b=Bget(L,2);
+    const mpi *a=Bget(L,1);
+    const mpi *b=Bget(L,2);
     mpi *c=Bnew(L);
-    switch(mpi_mul_mpi(c,a,b)) {
-    case 0: return 1;
-    case 1: return luaL_error(L, "memory allocation failed");
-    default: return luaL_error(L, "internal error");
-    }
+    mpi_check(L, mpi_mul_mpi(c,a,b));
+    return 1;
 }
 
 static int Bdiv(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *b=Bget(L,2);
+    const mpi *a=Bget(L,1);
+    const mpi *b=Bget(L,2);
     mpi *q=Bnew(L);
-    mpi *r=NULL;
-    switch(mpi_div_mpi(q,r,a,b)) {
-    case 0: return 1;
-    case 1: return luaL_error(L, "memory allocation failed");
-    case POLARSSL_ERR_MPI_DIVISION_BY_ZERO: return luaL_error(L, "attempt to divide by zero");
-    default: return luaL_error(L, "internal error");
-    }
+    mpi_check(L, mpi_div_mpi(q,NULL,a,b));
+    return 1;
 }
 
 static int Bmod(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *b=Bget(L,2);
+    const mpi *a=Bget(L,1);
+    const mpi *b=Bget(L,2);
     mpi *r=Bnew(L);
-    mpi *q=NULL;
-    switch(mpi_div_mpi(q,r,a,b)) {
-    case 0: return 1;
-    case 1: return luaL_error(L, "memory allocation failed");
-    case POLARSSL_ERR_MPI_DIVISION_BY_ZERO: return luaL_error(L, "attempt to divide by zero");
-    default: return luaL_error(L, "internal error");
-    }
+    mpi_check(L, mpi_div_mpi(NULL,r,a,b));
+    return 1;
 }
 
 /* Remove references to rmod, because there is no comparable PolarSSL function */
 
 static int Bdivmod(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *b=Bget(L,2);
+    const mpi *a=Bget(L,1);
+    const mpi *b=Bget(L,2);
     mpi *q=Bnew(L);
     mpi *r=Bnew(L);
-    switch(mpi_div_mpi(q,r,a,b)) {
-    case 0: return 2;
-    case 1: return luaL_error(L, "memory allocation failed");
-    case POLARSSL_ERR_MPI_DIVISION_BY_ZERO: return luaL_error(L, "attempt to divide by zero");
-    default: return luaL_error(L, "internal error");
-    }
+    mpi_check(L, mpi_div_mpi(q,r,a,b));
+    return 2;
 }
 
 static int Bgcd(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *b=Bget(L,2);
+    const mpi *a=Bget(L,1);
+    const mpi *b=Bget(L,2);
     mpi *c=Bnew(L);
-    switch(mpi_gcd(c,a,b)) {
-    case 0: return 1;
-    case 1: return luaL_error(L, "memory allocation failed");
-    default: return luaL_error(L, "internal error");
-    }
+    mpi_check(L, mpi_gcd(c,a,b));
+    return 1;
 }
 
 /* Remove references to pow.  PolarSSL only has powmod */
@@ -290,32 +288,23 @@ static int Bgcd(lua_State *L)
 
 static int Bpowmod(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *b=Bget(L,2);
-    mpi *m=Bget(L,3);
+    const mpi *a=Bget(L,1);
+    const mpi *b=Bget(L,2);
+    const mpi *m=Bget(L,3);
     mpi *c=Bnew(L);
-    switch(mpi_exp_mod(c,a,b,m,NULL)) {
-    case 0: return 1;
-    case 1: return luaL_error(L, "allocation failed");
-    case POLARSSL_ERR_MPI_BAD_INPUT_DATA: return luaL_error(L, "bad modulus");
-    default: return luaL_error(L, "internal error");
-    }
+    mpi_check(L, mpi_exp_mod(c,a,b,m,NULL));
+    return 1;
 }
 
 /* Sqrmod and sqrtmod don't exist */
 
 static int Binvmod(lua_State *L)
 {
-    mpi *a=Bget(L,1);
-    mpi *m=Bget(L,2);
+    const mpi *a=Bget(L,1);
+    const mpi *m=Bget(L,2);
     mpi *c=Bnew(L);
-    switch(mpi_inv_mod(c,a,m)) {
-    case 0: return 1;
-    case 1: return luaL_error(L, "memory allocation failed");
-    case POLARSSL_ERR_MPI_BAD_INPUT_DATA: return luaL_error(L, "bad modulus");
-    case POLARSSL_ERR_MPI_NOT_ACCEPTABLE: return luaL_error(L, "no inverse");
-    default: return luaL_error(L, "internal error");
-    }
+    mpi_check(L, mpi_inv_mod(c,a,m));
+    return 1;
 }
 
 /* TODO: Add the random methods later.  First test the basic bignum stuff */
@@ -338,13 +327,9 @@ static Bisprime(lua_State *L)
 
 static int Bgc(lua_State *L)
 {
-    mpi **a = (mpi **) lua_touserdata(L, 1);
-    mpi_free(*a);
-    free(*a);
-    lua_pushnil(L);
-    lua_setmetatable(L,1);
+    mpi *a = luaL_checkudata(L,1,MYTYPE);
+    mpi_free(a);
     return 0;
-
 }
 
 
@@ -398,11 +383,3 @@ LUALIB_API int luaopen_polarbn(lua_State *L)
     lua_settable(L,-3);
     return 1;
 }
-
-
-
-
-
-
-
-

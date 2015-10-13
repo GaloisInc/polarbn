@@ -15,7 +15,7 @@ print("Assigning a bignum")
 local x = polarbn.number(2)
 print ("x has been assigned:", x)
 local y = hex2bignum("DE2BCBF6955817183995497CEA956AE515D2261898FA0510")
-print("assigning exponent:",  polarbn.tohex(y))
+print("assigning exponent:",  y:tohex())
 
 local group5prime =
     [[FFFFFFFF FFFFFFFF C90FDAA2 2168C234 C4C6628B 80DC1CD1
@@ -28,7 +28,7 @@ local group5prime =
       670C354E 4ABC9804 F1746C08 CA237327 FFFFFFFF FFFFFFFF]]
 local prime5  = string.gsub(group5prime, "%s+", "")
 local m = hex2bignum(prime5)
-print("assigning modulus", polarbn.tohex(m))
+print("assigning modulus", m:tohex())
 local z = polarbn.powmod(x,y,m)
-print("x^e mod m = ", polarbn.tohex(z))
+print("x^e mod m = ", z:tohex())
 collectgarbage()
